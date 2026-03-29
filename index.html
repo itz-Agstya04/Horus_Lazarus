@@ -8,7 +8,7 @@
     <style>
         .medical-grid { background-image: radial-gradient(#1e293b 1px, transparent 1px); background-size: 20px 20px; }
         .status-emergency { border-left: 4px solid #ef4444; background: rgba(239, 68, 68, 0.1); }
-        .status-critical { border-left: 4px solid #f97316; background: rgba(249, 115, 22, 0.1); }
+        tr:hover { background: rgba(51, 65, 85, 0.4); }
     </style>
 </head>
 <body class="bg-slate-900 text-slate-100 medical-grid min-h-screen p-8">
@@ -16,98 +16,143 @@
     <div class="flex justify-between items-end mb-10">
         <div>
             <h1 class="text-4xl font-black tracking-tighter text-blue-500">LAZARUS <span class="text-slate-500 text-lg font-light tracking-widest ml-2">v2.0</span></h1>
-            <p class="text-slate-400 font-mono text-xs uppercase">Integrity-Validated Patient Surveillance</p>
+            <p class="text-slate-400 font-mono text-xs uppercase">Forensic Scoring & Integrity System</p>
         </div>
         <div class="flex gap-8">
             <div class="text-right">
                 <span class="block text-slate-500 text-[10px] uppercase font-bold">Emergency Cases</span>
-                <span id="kpi-emergency" class="text-2xl font-mono text-red-500">--</span>
+                <span id="kpi-emergency" class="text-2xl font-mono text-red-500">0</span>
             </div>
             <div class="text-right">
                 <span class="block text-slate-500 text-[10px] uppercase font-bold">System Integrity</span>
-                <span id="kpi-integrity" class="text-2xl font-mono text-green-400">--%</span>
+                <span id="kpi-integrity" class="text-2xl font-mono text-green-400">0%</span>
             </div>
         </div>
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
         <div class="lg:col-span-3 bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden backdrop-blur-md">
-            <div class="p-4 border-b border-slate-700 flex justify-between bg-slate-800/80">
-                <h2 class="text-sm font-bold uppercase tracking-widest text-slate-400">Active Patient Triage</h2>
+            <div class="p-4 border-b border-slate-700 bg-slate-800/80">
+                <h2 class="text-sm font-bold uppercase tracking-widest text-slate-400">Patient Triage (Click a row for details)</h2>
             </div>
-            <div class="overflow-y-auto max-h-[700px]">
+            <div class="overflow-y-auto max-h-[600px]">
                 <table class="w-full text-left border-collapse">
                     <thead class="sticky top-0 bg-slate-900 text-slate-500 text-[10px] uppercase">
                         <tr>
-                            <th class="p-4">Ident / Room</th>
+                            <th class="p-4">Patient / Room</th>
                             <th class="p-4">Status</th>
                             <th class="p-4 text-center">Final Score</th>
                             <th class="p-4 text-center">HR / SpO2</th>
                             <th class="p-4">Confidence</th>
                         </tr>
                     </thead>
-                    <tbody id="patient-rows" class="divide-y divide-slate-700/50 font-mono text-sm">
-                        </tbody>
+                    <tbody id="patient-rows" class="divide-y divide-slate-700/50 font-mono text-sm"></tbody>
                 </table>
             </div>
         </div>
 
         <div class="space-y-6">
-            <div id="detail-panel" class="bg-slate-800 border border-slate-700 rounded-xl p-6 hidden">
-                <h3 class="text-blue-400 font-bold mb-4" id="det-name">Patient Name</h3>
-                <div class="space-y-3 text-xs mb-6">
-                    <div class="flex justify-between border-b border-slate-700 pb-1">
-                        <span class="text-slate-500">Anomaly Score</span>
-                        <span class="text-red-400" id="det-anomaly">--</span>
-                    </div>
-                    <div class="flex justify-between border-b border-slate-700 pb-1">
-                        <span class="text-slate-500">Risk Score</span>
-                        <span class="text-orange-400" id="det-risk">--</span>
-                    </div>
-                </div>
-                <div class="h-40">
+            <div id="detail-panel" class="bg-slate-800 border border-slate-700 rounded-xl p-6">
+                <h3 class="text-blue-400 font-bold mb-1" id="det-name">Select a Patient</h3>
+                <p id="det-meds" class="text-[10px] text-slate-500 mb-4 truncate">No patient selected</p>
+                <div class="h-48">
                     <canvas id="miniChart"></canvas>
                 </div>
             </div>
             
             <div class="bg-slate-800 border border-slate-700 rounded-xl p-6">
-                <h3 class="text-slate-400 font-bold text-[10px] uppercase mb-4">Risk Distribution</h3>
-                <canvas id="distChart"></canvas>
+                <h3 class="text-slate-400 font-bold text-[10px] uppercase mb-4 text-center">Risk Distribution</h3>
+                <div class="h-48">
+                    <canvas id="distChart"></canvas>
+                </div>
             </div>
         </div>
     </div>
 
     <script>
+        let miniChart;
+        let distChart;
+
         async function init() {
             const res = await fetch('dashboard_data.json');
             const data = await res.json();
             
-            // Populate Table
+            // 1. Update KPIs
+            const emergencyCount = data.filter(p => p.status === 'Emergency').length;
+            const avgIntegrity = data.reduce((acc, p) => acc + p.integrity_score, 0) / data.length;
+            document.getElementById('kpi-emergency').innerText = emergencyCount;
+            document.getElementById('kpi-integrity').innerText = (avgIntegrity * 100).toFixed(1) + '%';
+
+            // 2. Render Risk Distribution Chart
+            const counts = { Emergency: 0, Critical: 0, Warning: 0, Stable: 0 };
+            data.forEach(p => counts[p.status]++);
+            renderDistChart(counts);
+
+            // 3. Populate Table
             const container = document.getElementById('patient-rows');
             container.innerHTML = data.map(p => `
-                <tr class="hover:bg-slate-700/30 cursor-pointer transition-all ${p.status.toLowerCase() === 'emergency' ? 'status-emergency' : ''}">
+                <tr onclick='showDetails(${JSON.stringify(p)})' class="cursor-pointer transition-all ${p.status === 'Emergency' ? 'status-emergency' : ''}">
                     <td class="p-4">
                         <div class="font-bold text-slate-200">${p.name}</div>
-                        <div class="text-[10px] text-slate-500">${p.ghost_id} | R-${p.room_id}</div>
+                        <div class="text-[10px] text-slate-500">R-${p.room_id} | ${p.ghost_id}</div>
                     </td>
                     <td class="p-4">
-                        <span class="px-2 py-0.5 rounded text-[10px] font-black border ${getStatusStyles(p.status)}">
-                            ${p.status}
-                        </span>
+                        <span class="px-2 py-0.5 rounded text-[10px] font-black border ${getStatusStyles(p.status)}">${p.status}</span>
                     </td>
                     <td class="p-4 text-center font-bold text-lg">${p.final_score.toFixed(2)}</td>
                     <td class="p-4 text-center">
-                        <span class="${p.bpm > 100 ? 'text-red-400' : ''}">${p.bpm}</span>
-                        <span class="text-slate-600 mx-1">/</span>
-                        <span class="${p.spo2 < 94 ? 'text-yellow-500' : ''}">${p.spo2.toFixed(1)}%</span>
+                        <span class="${p.bpm > 100 || p.bpm < 60 ? 'text-red-400' : ''}">${p.bpm}</span>
+                        <span class="text-slate-600">/</span>
+                        <span class="${p.spo2 < 94 ? 'text-yellow-500' : ''}">${p.spo2.toFixed(1)}</span>
                     </td>
                     <td class="p-4">
-                        <div class="w-full bg-slate-700 h-1 rounded-full">
-                            <div class="bg-blue-500 h-full" style="width: ${p.confidence_score * 100}%"></div>
-                        </div>
+                        <div class="w-full bg-slate-700 h-1 rounded-full"><div class="bg-blue-500 h-full" style="width: ${p.confidence_score * 100}%"></div></div>
                     </td>
                 </tr>
             `).join('');
+
+            // Show first patient by default
+            if(data.length > 0) showDetails(data[0]);
+        }
+
+        function showDetails(p) {
+            document.getElementById('det-name').innerText = p.name;
+            document.getElementById('det-meds').innerText = "Meds: " + (p.medications || "None Found");
+            
+            const ctx = document.getElementById('miniChart').getContext('2d');
+            if (miniChart) miniChart.destroy();
+            
+            miniChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['Risk', 'Anomaly', 'Integrity', 'Confidence'],
+                    datasets: [{
+                        data: [p.risk_score, p.anomaly_score, p.integrity_score, p.confidence_score],
+                        backgroundColor: ['#f97316', '#ef4444', '#10b981', '#3b82f6']
+                    }]
+                },
+                options: { 
+                    indexAxis: 'y',
+                    plugins: { legend: { display: false } },
+                    scales: { x: { display: false }, y: { ticks: { color: '#94a3b8' } } }
+                }
+            });
+        }
+
+        function renderDistChart(counts) {
+            const ctx = document.getElementById('distChart').getContext('2d');
+            distChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Emergency', 'Critical', 'Warning', 'Stable'],
+                    datasets: [{
+                        data: [counts.Emergency, counts.Critical, counts.Warning, counts.Stable],
+                        backgroundColor: ['#ef4444', '#f97316', '#eab308', '#10b981'],
+                        borderWidth: 0
+                    }]
+                },
+                options: { cutout: '70%', plugins: { legend: { display: false } } }
+            });
         }
 
         function getStatusStyles(status) {
